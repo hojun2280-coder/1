@@ -155,20 +155,28 @@
 
 <script>
 (() => {
-  const STORE = 'district-organizer-v2';
+  const STORE = 'district-organizer-v3';
+  const OLD_STORE = 'district-organizer-v2';
   const SERVICE = { '가능': 1, '일부': 0.5, '어려움': 0 };
   const BANDS = ['20대 이하', '30대', '40대', '50대', '60대', '70대 이상'];
   const bandIdx = (a) => a >= 70 ? 5 : a >= 60 ? 4 : a >= 50 ? 3 : a >= 40 ? 2 : a >= 30 ? 1 : 0;
 
   let units = [];
-  let assignment = null; // unitId -> district index
+  let assignment = null; // unitId -> 그 구역 구역장의 id
   let settings = { youngUnder: 40, bridgeMin: 40, bridgeMax: 59 };
   let seed = 1;
   let nextId = 1;
 
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const codes = (s) => String(s || '').split(/[,，\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
+  const codeCache = new Map();
+  const codes = (s) => {
+    s = String(s || '');
+    if (!s) return [];
+    let r = codeCache.get(s);
+    if (!r) { r = [...new Set(s.split(/[,，\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean))]; codeCache.set(s, r); }
+    return r;
+  };
   const adultsOf = (u) => Number(u.adults) || 1;
   const serviceOf = (u) => adultsOf(u) * (SERVICE[u.service] ?? 1);
   const isFam = (u) => u.type === '가족';
@@ -176,7 +184,8 @@
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify({ units, assignment, settings, seed })); } catch (e) {} };
   const load = () => {
     try {
-      const d = JSON.parse(localStorage.getItem(STORE) || 'null');
+      let d = JSON.parse(localStorage.getItem(STORE) || 'null');
+      if (!d) { d = JSON.parse(localStorage.getItem(OLD_STORE) || 'null'); if (d) d.assignment = null; }
       if (d && Array.isArray(d.units)) {
         units = d.units; assignment = d.assignment || null;
         settings = { ...settings, ...(d.settings || {}) }; seed = d.seed || 1;
@@ -214,7 +223,7 @@
           if (k === 'age' || k === 'adults') v = v === '' ? '' : Number(v);
           u[k] = v;
           if (k === 'type') { u.adults = v === '가족' ? Math.max(2, u.adults || 2) : 1; renderRows(); }
-          save();
+          save(); renderResult();
         });
       });
       tr.querySelector('[data-del]').addEventListener('click', () => {
@@ -239,7 +248,7 @@
     list.forEach((u) => { const r = find(u.id); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(u); });
     const blocks = [...groups.values()].map((members) => ({ members }));
 
-    const leaders = list.filter((u) => u.leader).sort((a, b) => b.age - a.age);
+    const leaders = list.filter((u) => u.leader); // 명단에 적힌 순서대로 1구역, 2구역…
     const leaderDistrict = new Map(leaders.map((u, i) => [u.id, i]));
     const problems = [];
     blocks.forEach((b) => {
@@ -251,7 +260,14 @@
     });
     const blockOf = new Map();
     blocks.forEach((b, i) => b.members.forEach((u) => blockOf.set(u.id, i)));
-    return { list, blocks, blockOf, n: leaders.length, leaders, problems };
+    // 지금 배정된 구역 번호 (없으면 -1). 구역장과 한 묶음이면 항상 그 구역.
+    const distOf = (u) => {
+      const b = blocks[blockOf.get(u.id)];
+      if (b.fixed != null) return b.fixed;
+      const d = assignment ? leaderDistrict.get(assignment[u.id]) : undefined;
+      return d == null ? -1 : d;
+    };
+    return { list, blocks, blockOf, n: leaders.length, leaders, problems, distOf };
   }
 
   // ---------- 구역별 집계 ----------
@@ -283,9 +299,14 @@
       adults: sum((d) => d.adults) / n, fam: sum((d) => d.fam) / n, svc: sum((d) => d.svc) / n,
       bands: BANDS.map((_, i) => sum((d) => d.bands[i]) / n),
       bridgeTotal: sum((d) => d.bridge), youngTotal: sum((d) => d.youngFam.length),
+      youngSoloTotal: sum((d) => d.youngSolo),
+      youngCap: Math.max(2, Math.ceil(sum((d) => d.youngFam.length) / n)),
       careCap: Math.max(1, Math.ceil(sum((d) => d.care) / n)),
     };
   }
+
+  // 젊은 가정이 또래(다른 젊은 가정이나 젊은 개인) 없이 혼자인 구역
+  const lonely = (d, T) => d.youngFam.length === 1 && d.youngSolo === 0 && (T.youngTotal > 1 || T.youngSoloTotal > 0);
 
   // 점수가 낮을수록 좋은 편성
   function cost(D) {
@@ -295,8 +316,8 @@
       // 분리 요청 위반
       Object.values(d.apart).forEach((arr) => { if (arr.length > 1) c += 1000 * (arr.length * (arr.length - 1) / 2); });
       // 젊은 가정 고립 / 한곳 몰림
-      if (d.youngFam.length === 1 && d.youngSolo === 0 && T.youngTotal > 1) c += 200;
-      if (d.youngFam.length > 2) c += 60 * (d.youngFam.length - 2);
+      if (lonely(d, T)) c += 200;
+      if (d.youngFam.length > T.youngCap) c += 60 * (d.youngFam.length - T.youngCap);
       // 다리 역할 가정
       if (d.bridge === 0 && T.bridgeTotal > 0) c += 150;
       // 돌봄 필요
@@ -374,7 +395,7 @@
       if (!best || res.cost < best.cost) best = res;
     }
     assignment = {};
-    P.blocks.forEach((b, i) => b.members.forEach((u) => { assignment[u.id] = best.where[i]; }));
+    P.blocks.forEach((b, i) => b.members.forEach((u) => { assignment[u.id] = P.leaders[best.where[i]].id; }));
     save(); renderResult();
   }
 
@@ -382,8 +403,8 @@
   function checkDistrict(d, T) {
     const w = [];
     Object.values(d.apart).forEach((arr) => { if (arr.length > 1) w.push(`분리 요청 위반: ${arr.map((u) => u.name).join(', ')}`); });
-    if (d.youngFam.length === 1 && d.youngSolo === 0 && T.youngTotal > 1) w.push(`젊은 가정(${d.youngFam[0].name})이 또래 없이 혼자입니다.`);
-    if (d.youngFam.length > 2) w.push(`젊은 가정이 ${d.youngFam.length}가정 몰려 있습니다.`);
+    if (lonely(d, T)) w.push(`젊은 가정(${d.youngFam[0].name})이 또래 없이 혼자입니다.`);
+    if (d.youngFam.length > T.youngCap) w.push(`젊은 가정이 ${d.youngFam.length}가정 몰려 있습니다.`);
     if (d.bridge === 0 && T.bridgeTotal > 0) w.push(`다리 역할을 할 ${settings.bridgeMin}~${settings.bridgeMax}세 가정이 없습니다.`);
     if (d.care > T.careCap) w.push(`돌봄이 필요한 분이 ${d.care}명입니다 (구역당 ${T.careCap}명 이하 권장).`);
     if (d.fam === 0) w.push('가족 단위가 없습니다.');
@@ -394,16 +415,17 @@
   }
 
   function districtsNow(P) {
-    return aggregate(P.list, P.n, (u) => (assignment && assignment[u.id] != null ? assignment[u.id] : -1));
+    return aggregate(P.list, P.n, P.distOf);
   }
 
   function renderResult() {
     if (!assignment) { $('#resultSec').hidden = true; return; }
     const P = prepare();
-    if (!P.n) return;
+    if (!P.n) { $('#resultSec').hidden = true; return; }
     const D = districtsNow(P);
     const T = totals(D);
-    const unassigned = P.list.filter((u) => assignment[u.id] == null || assignment[u.id] >= P.n);
+    const unassigned = P.list.filter((u) => P.distOf(u) < 0);
+    const split = P.blocks.filter((b) => new Set(b.members.map(P.distOf).filter((d) => d >= 0)).size > 1).length;
     $('#resultSec').hidden = false;
     const all = D.flatMap((d) => d.members);
     $('#summary').textContent = `${P.n}개 구역 · 가족 ${all.filter(isFam).length}가정 · 개인 ${all.filter((u) => !isFam(u)).length}명 · 성인 총 ${all.reduce((s, u) => s + adultsOf(u), 0)}명 (구역당 평균 ${T.adults.toFixed(1)}명, 봉사 일손 평균 ${T.svc.toFixed(1)})`;
@@ -412,8 +434,9 @@
     const cnt = (re) => perDistrict.filter((ws) => ws.some((w) => re.test(w))).length;
     const checks = [
       ['분리 요청 위반', cnt(/^분리/)],
+      ['함께 요청이 갈라진 묶음', split],
       ['젊은 가정이 혼자인 구역', cnt(/혼자입니다/)],
-      ['다리 역할 가정이 없는 구역', cnt(/다리 역할/)],
+      [T.bridgeTotal < P.n ? `다리 역할 가정이 없는 구역 (해당 가정이 ${T.bridgeTotal}가정뿐이라 모든 구역에 둘 수 없음)` : '다리 역할 가정이 없는 구역', cnt(/다리 역할/)],
       ['돌봄 필요 인원이 많은 구역', cnt(/돌봄/)],
       ['인원·일손이 치우친 구역', cnt(/평균/)],
     ];
@@ -442,7 +465,7 @@
         if (block.fixed == null) {
           const sel = document.createElement('select');
           D.forEach((_, j) => { const o = document.createElement('option'); o.value = j; o.textContent = `${j + 1}구역`; if (j === i) o.selected = true; sel.appendChild(o); });
-          sel.addEventListener('change', () => { block.members.forEach((x) => { assignment[x.id] = Number(sel.value); }); save(); renderResult(); });
+          sel.addEventListener('change', () => { block.members.forEach((x) => { assignment[x.id] = P.leaders[Number(sel.value)].id; }); save(); renderResult(); });
           m.appendChild(sel);
         }
         el.appendChild(m);
@@ -482,35 +505,47 @@
   }
 
   function parsePaste(text) {
-    const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
-    if (!lines.length) return [];
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l) => l.trim());
+    const out = []; const skipped = [];
+    if (!lines.length) return { rows: out, skipped };
     let map = COLS; let start = 0;
     const first = splitLine(lines[0]);
     if (first.some((h) => /이름|성명/.test(h))) { map = first.map(headerKey); start = 1; }
-    const out = [];
     lines.slice(start).forEach((line) => {
       const c = splitLine(line); const r = {};
-      map.forEach((k, i) => { if (k) r[k] = c[i] ?? ''; });
-      const age = Number(r['나이']);
-      if (!r['이름'] || r['나이'] === '' || isNaN(age)) return;
+      map.forEach((k, i) => { if (k && r[k] === undefined) r[k] = c[i] ?? ''; });
+      const ageText = String(r['나이'] ?? '').replace(/[^0-9.]/g, '');
+      const age = Number(ageText);
+      if (!r['이름'] || ageText === '' || isNaN(age)) { skipped.push(r['이름'] || line.trim().slice(0, 20)); return; }
       const type = /가족|가정|부부/.test(r['구분'] || '') ? '가족' : '개인';
       const svc = /어려|불가|x/i.test(r['봉사'] || '') ? '어려움' : /일부|조금|가끔|△/.test(r['봉사'] || '') ? '일부' : '가능';
       out.push(newUnit({
-        name: r['이름'], type, age, adults: Number(r['성인수']) || (type === '가족' ? 2 : 1),
+        name: r['이름'], type, age, adults: parseInt(r['성인수'], 10) || (type === '가족' ? 2 : 1),
         leader: yes(r['구역장']), service: svc, care: yes(r['돌봄']),
         together: r['함께'] || '', apart: r['분리'] || '', memo: r['메모'] || '',
       }));
     });
-    return out;
+    return { rows: out, skipped };
+  }
+
+  function importPaste(replace) {
+    const { rows, skipped } = parsePaste($('#paste').value);
+    if (!rows.length) { alert('읽을 수 있는 줄이 없습니다. 이름과 나이 칸이 있는지 확인해 주세요. 명단은 그대로 두었습니다.'); return; }
+    if (replace) { units = rows; assignment = null; }
+    else units = units.filter((u) => String(u.name).trim()).concat(rows);
+    $('#paste').value = '';
+    save(); renderRows(); renderResult();
+    if (skipped.length) alert(`${rows.length}줄을 읽었습니다. 이름이나 나이가 없어 건너뛴 줄 ${skipped.length}개:\n` + skipped.join(', '));
   }
 
   function exportCsv() {
     if (!assignment) { alert('먼저 편성을 실행해 주세요.'); return; }
     const P = prepare();
+    const line = (label, u) => [label, u.name, u.type, u.age, u.adults, u.leader ? 'O' : '', u.service, u.care ? 'O' : '', u.together, u.apart, u.memo || ''];
     const lines = [['구역', ...COLS]];
-    districtsNow(P).forEach((d, i) => d.members.forEach((u) =>
-      lines.push([`${i + 1}구역`, u.name, u.type, u.age, u.adults, u.leader ? 'O' : '', u.service, u.care ? 'O' : '', u.together, u.apart, u.memo || ''])));
-    const csv = '﻿' + lines.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    districtsNow(P).forEach((d, i) => d.members.forEach((u) => lines.push(line(`${i + 1}구역`, u))));
+    P.list.filter((u) => P.distOf(u) < 0).forEach((u) => lines.push(line('미배정', u)));
+    const csv = '\uFEFF' + lines.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     a.download = '구역편성.csv';
@@ -541,14 +576,21 @@
     settings.youngUnder = Number($('#youngUnder').value) || 40;
     settings.bridgeMin = Number($('#bridgeMin').value) || 40;
     settings.bridgeMax = Number($('#bridgeMax').value) || 59;
+    if (settings.bridgeMin > settings.bridgeMax) {
+      [settings.bridgeMin, settings.bridgeMax] = [settings.bridgeMax, settings.bridgeMin];
+      $('#bridgeMin').value = settings.bridgeMin; $('#bridgeMax').value = settings.bridgeMax;
+    }
     save();
   }
 
   $('#addRow').onclick = () => { units.push(newUnit()); save(); renderRows(); };
-  $('#sample').onclick = () => { units = units.filter((u) => String(u.name).trim()).concat(sampleData()); save(); renderRows(); };
+  $('#sample').onclick = () => {
+    if (units.some((u) => String(u.name).trim()) && !confirm('지금 명단을 지우고 예시 명단으로 바꿀까요?')) return;
+    units = sampleData(); assignment = null; save(); renderRows(); renderResult();
+  };
   $('#clearAll').onclick = () => { if (confirm('명단과 편성 결과를 모두 지울까요?')) { units = [newUnit()]; assignment = null; save(); renderRows(); renderResult(); } };
-  $('#importAdd').onclick = () => { units = units.filter((u) => String(u.name).trim()).concat(parsePaste($('#paste').value)); $('#paste').value = ''; save(); renderRows(); };
-  $('#importReplace').onclick = () => { units = parsePaste($('#paste').value); assignment = null; $('#paste').value = ''; save(); renderRows(); renderResult(); };
+  $('#importAdd').onclick = () => importPaste(false);
+  $('#importReplace').onclick = () => importPaste(true);
   const busy = (btn, newSeed) => () => {
     const label = btn.textContent; btn.textContent = '편성 중…'; btn.disabled = true;
     setTimeout(() => { try { run(newSeed); } finally { btn.textContent = label; btn.disabled = false; } }, 30);
