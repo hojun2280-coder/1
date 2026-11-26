@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--accent:__ACCENT__;--accent2:__ACCENT2__;--ink:#1d1d1f;--paper:#fff;--bg:#e9e9ec}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--ink);padding:16px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;font-size:14px}
+.bar button{border:0;background:var(--accent);color:#fff;padding:9px 14px;border-radius:8px;font:inherit;font-weight:700;cursor:pointer}
+.hint{font-size:12px;color:#666;text-align:center;max-width:420px}
+/* 광고판: 3:5 비율 (예: 600×1000mm) */
+#ad{width:min(100%,420px);aspect-ratio:3/5;background:var(--paper);border:6px solid var(--ink);display:flex;flex-direction:column;position:relative}
+.head{background:var(--accent);color:#fff;text-align:center;padding:3.2% 4%}
+.head .t1{font-size:clamp(11px,3.4vw,14px);opacity:.9;letter-spacing:.08em}
+.head .t2{font-size:clamp(20px,7vw,30px);font-weight:900;line-height:1.2}
+.photo{flex:1;position:relative;background:#f1f1f3 center/cover no-repeat;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden}
+.photo .ph{font-size:clamp(28px,10vw,44px);color:#b5b5bb;font-weight:700;pointer-events:none}
+.photo.has .ph{display:none}
+.photo .cap{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.65));color:#fff;padding:10% 5% 4%;font-weight:700;font-size:clamp(14px,4.6vw,19px);cursor:text}
+.divider{height:3.4%;background:var(--paper);border-top:3px solid var(--ink);border-bottom:3px solid var(--ink);position:relative}
+.divider::after{content:"";position:absolute;inset:30% 0;background:var(--accent2)}
+.foot{background:var(--ink);color:#fff;text-align:center;padding:3.4% 4%;border-top:3px solid var(--ink)}
+.foot .name{font-size:clamp(13px,4vw,17px);font-weight:700}
+.foot .tel{font-size:clamp(20px,7.4vw,31px);font-weight:900;color:var(--accent2);letter-spacing:.02em}
+[contenteditable]:focus{outline:2px dashed var(--accent2);outline-offset:2px}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+<div class="bar">
+  <button onclick="save()">PNG 저장</button>
+  <button onclick="document.querySelectorAll('.photo').forEach(p=>{p.style.backgroundImage='';p.classList.remove('has')})">사진 초기화</button>
+</div>
+<p class="hint">사진 칸을 누르면 사진을 넣을 수 있고, 글자는 눌러서 바로 고칠 수 있습니다.</p>
+
+<div id="ad">
+  <div class="head">
+    <div class="t1" contenteditable>__T1__</div>
+    <div class="t2" contenteditable>__T2__</div>
+  </div>
+  <div class="photo" data-i="0"><span class="ph">사진</span><div class="cap" contenteditable>__CAP1__</div></div>
+  <div class="divider"></div>
+  <div class="photo" data-i="1"><span class="ph">사진</span><div class="cap" contenteditable>__CAP2__</div></div>
+  <div class="foot">
+    <div class="name" contenteditable>__NAME__</div>
+    <div class="tel" contenteditable>☎ 010-0000-0000</div>
+  </div>
+</div>
+<input type="file" accept="image/*" id="file">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+let target=null;const file=document.getElementById('file');
+document.querySelectorAll('.photo').forEach(p=>p.addEventListener('click',e=>{if(e.target.closest('.cap'))return;target=p;file.click();}));
+file.onchange=()=>{const f=file.files[0];if(!f||!target)return;const r=new FileReader();
+ r.onload=()=>{target.style.backgroundImage=`url(${r.result})`;target.classList.add('has')};r.readAsDataURL(f);file.value='';};
+function save(){document.activeElement.blur();
+ html2canvas(document.getElementById('ad'),{scale:4,useCORS:true}).then(c=>{const a=document.createElement('a');
+ a.download='__FILE__.png';a.href=c.toDataURL('image/png');a.click();});}
+</script>
+</body>
+</html>
