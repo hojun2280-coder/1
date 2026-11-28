@@ -1,0 +1,19 @@
+{
+  "name": "closet-mirror",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "옷장 옆 AI 코디 도우미 (2주 검증용 MVP)",
+  "scripts": {
+    "start": "node server.mjs",
+    "build": "node build.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.14.0",
+    "zod": "^4.6.7"
+  }
+}
